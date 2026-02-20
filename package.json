@@ -9,6 +9,7 @@
     "lint": "next lint"
   },
   "dependencies": {
+    "@netlify/plugin-nextjs": "^5.15.8",
     "@supabase/supabase-js": "^2.57.4",
     "next": "15.1.6",
     "react": "19.0.0",
