@@ -1,16 +1,41 @@
 'use client';
 
-import { FormEvent, useEffect, useState } from 'react';
+import Link from 'next/link';
+import { FormEvent, useCallback, useEffect, useState } from 'react';
 import { supabaseBrowser } from '@/lib/supabase-browser';
-import type { Park, ParkPathPrefix } from '@/lib/types';
+import type { Park, ParkPathPrefix, SupportTicket, SupportTicketPriority, SupportTicketStatus } from '@/lib/types';
+
+const statusLabelMap: Record<SupportTicketStatus, string> = {
+  open: 'Offen',
+  in_progress: 'In Bearbeitung',
+  resolved: 'Gelöst',
+  closed: 'Geschlossen',
+};
+
+const priorityLabelMap: Record<SupportTicketPriority, string> = {
+  low: 'Niedrig',
+  medium: 'Mittel',
+  high: 'Hoch',
+  critical: 'Kritisch',
+};
+
+const formatDateTime = (value: string) =>
+  new Intl.DateTimeFormat('de-DE', {
+    dateStyle: 'short',
+    timeStyle: 'short',
+  }).format(new Date(value));
 
 export default function ParksPage() {
   const [parks, setParks] = useState<Park[]>([]);
   const [prefixes, setPrefixes] = useState<ParkPathPrefix[]>([]);
+  const [supportPreview, setSupportPreview] = useState<SupportTicket[]>([]);
   const [name, setName] = useState('');
   const [slug, setSlug] = useState('');
   const [parkForPrefix, setParkForPrefix] = useState('');
   const [pathPrefix, setPathPrefix] = useState('');
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [supportLoading, setSupportLoading] = useState(true);
+  const [supportError, setSupportError] = useState<string | null>(null);
   const [status, setStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -46,7 +71,46 @@ export default function ParksPage() {
     }
   };
 
-  useEffect(() => { load(); }, []);
+  const loadSupportPreview = useCallback(async () => {
+    setSupportLoading(true);
+    const { data, error: supportLoadError } = await supabaseBrowser
+      .from('support_tickets')
+      .select('id, organization_id, created_by, subject, description, status, priority, created_at, updated_at')
+      .order('created_at', { ascending: false })
+      .limit(5);
+
+    if (supportLoadError) {
+      setSupportError(supportLoadError.message);
+      setSupportLoading(false);
+      return;
+    }
+
+    setSupportPreview((data || []) as SupportTicket[]);
+    setSupportError(null);
+    setSupportLoading(false);
+  }, []);
+
+  useEffect(() => {
+    void load();
+    void loadSupportPreview();
+  }, [loadSupportPreview]);
+
+  useEffect(() => {
+    const channel = supabaseBrowser
+      .channel('support-ticket-preview-live')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'support_tickets' }, async () => {
+        await loadSupportPreview();
+      })
+      .subscribe((channelStatus) => {
+        if (channelStatus === 'CHANNEL_ERROR') {
+          setSupportError('Realtime-Verbindung fehlgeschlagen. Bitte Seite neu laden.');
+        }
+      });
+
+    return () => {
+      void supabaseBrowser.removeChannel(channel);
+    };
+  }, [loadSupportPreview]);
 
   const createPark = async (e: FormEvent) => {
     e.preventDefault();
@@ -93,8 +157,59 @@ export default function ParksPage() {
     await load();
   };
 
+  const deletePark = async (parkId: string, parkName: string) => {
+    if (!confirm(`Park "${parkName}" wirklich löschen?`)) return;
+    setError(null);
+    setStatus(null);
+    setDeletingId(parkId);
+
+    try {
+      const res = await fetch(`/api/admin/parks?id=${encodeURIComponent(parkId)}`, {
+        method: 'DELETE',
+        headers: await authHeader(),
+      });
+      const body = await res.json();
+
+      if (!res.ok) {
+        setError(body.error || 'Park konnte nicht gelöscht werden');
+        return;
+      }
+
+      if (parkForPrefix === parkId) setParkForPrefix('');
+      setStatus('Park gelöscht');
+      await load();
+    } finally {
+      setDeletingId(null);
+    }
+  };
+
+  const deletePrefix = async (prefixId: string, prefix: string) => {
+    if (!confirm(`Prefix "${prefix}" wirklich löschen?`)) return;
+    setError(null);
+    setStatus(null);
+    setDeletingId(prefixId);
+
+    try {
+      const res = await fetch(`/api/admin/park-prefixes?id=${encodeURIComponent(prefixId)}`, {
+        method: 'DELETE',
+        headers: await authHeader(),
+      });
+      const body = await res.json();
+
+      if (!res.ok) {
+        setError(body.error || 'Prefix konnte nicht gelöscht werden');
+        return;
+      }
+
+      setStatus('Prefix gelöscht');
+      await load();
+    } finally {
+      setDeletingId(null);
+    }
+  };
+
   return (
-    <div className="grid two">
+    <div className="grid three">
       <div className="card">
         <h2>Park anlegen</h2>
         <form className="grid" onSubmit={createPark}>
@@ -130,16 +245,51 @@ export default function ParksPage() {
         </form>
       </div>
 
+      <div className="card">
+        <h2>Support Ticket Kunden</h2>
+        <p className="note">Live-Vorschau der neuesten synchronisierten Tickets.</p>
+        {supportLoading && <p className="support-loading">Tickets werden geladen...</p>}
+        {!supportLoading && supportError && <p className="support-error">{supportError}</p>}
+        {!supportLoading && !supportError && supportPreview.length === 0 && (
+          <p className="support-empty">Keine Tickets vorhanden.</p>
+        )}
+        {!supportLoading && !supportError && supportPreview.length > 0 && (
+          <ul className="ticket-preview-list">
+            {supportPreview.map((ticket) => (
+              <li key={ticket.id} className="ticket-preview-item">
+                <p className="ticket-preview-subject">{ticket.subject}</p>
+                <div className="ticket-preview-meta">
+                  <span className={`badge status-${ticket.status}`}>{statusLabelMap[ticket.status]}</span>
+                  <span className={`badge priority-${ticket.priority}`}>{priorityLabelMap[ticket.priority]}</span>
+                  <span className="note">{formatDateTime(ticket.created_at)}</span>
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
+        <Link href="/support-ticket-kunden" className="support-link">Zur Support-Ansicht</Link>
+      </div>
+
       <div className="card" style={{ gridColumn: '1 / -1' }}>
         <h2>Parks</h2>
         <table className="table">
-          <thead><tr><th>Name</th><th>Slug</th><th>Status</th></tr></thead>
+          <thead><tr><th>Name</th><th>Slug</th><th>Status</th><th>Aktionen</th></tr></thead>
           <tbody>
             {parks.map((park) => (
               <tr key={park.id}>
                 <td>{park.name}</td>
                 <td>{park.slug}</td>
                 <td><span className={`badge ${park.is_active ? 'ok' : 'warn'}`}>{park.is_active ? 'Aktiv' : 'Inaktiv'}</span></td>
+                <td>
+                  <button
+                    type="button"
+                    className="danger inline"
+                    onClick={() => deletePark(park.id, park.name)}
+                    disabled={deletingId === park.id}
+                  >
+                    Löschen
+                  </button>
+                </td>
               </tr>
             ))}
           </tbody>
@@ -149,13 +299,23 @@ export default function ParksPage() {
       <div className="card" style={{ gridColumn: '1 / -1' }}>
         <h2>Prefix-Mappings</h2>
         <table className="table">
-          <thead><tr><th>Prefix</th><th>Park ID</th><th>Status</th></tr></thead>
+          <thead><tr><th>Prefix</th><th>Park ID</th><th>Status</th><th>Aktionen</th></tr></thead>
           <tbody>
             {prefixes.map((prefix) => (
               <tr key={prefix.id}>
                 <td>{prefix.path_prefix}</td>
                 <td>{prefix.park_id}</td>
                 <td><span className={`badge ${prefix.is_active ? 'ok' : 'warn'}`}>{prefix.is_active ? 'Aktiv' : 'Inaktiv'}</span></td>
+                <td>
+                  <button
+                    type="button"
+                    className="danger inline"
+                    onClick={() => deletePrefix(prefix.id, prefix.path_prefix)}
+                    disabled={deletingId === prefix.id}
+                  >
+                    Löschen
+                  </button>
+                </td>
               </tr>
             ))}
           </tbody>

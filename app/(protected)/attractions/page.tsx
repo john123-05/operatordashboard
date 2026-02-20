@@ -10,6 +10,7 @@ export default function AttractionsPage() {
   const [attractions, setAttractions] = useState<Attraction[]>([]);
   const [name, setName] = useState('');
   const [slug, setSlug] = useState('');
+  const [deletingId, setDeletingId] = useState<string | null>(null);
   const [status, setStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -79,6 +80,30 @@ export default function AttractionsPage() {
     await loadAttractions(selectedParkId);
   };
 
+  const onDelete = async (attractionId: string, attractionName: string) => {
+    if (!confirm(`Attraktion "${attractionName}" wirklich löschen?`)) return;
+    setError(null);
+    setStatus(null);
+    setDeletingId(attractionId);
+
+    try {
+      const res = await fetch(`/api/admin/attractions?id=${encodeURIComponent(attractionId)}`, {
+        method: 'DELETE',
+        headers: await authHeader(),
+      });
+      const body = await res.json();
+      if (!res.ok) {
+        setError(body.error || 'Attraktion konnte nicht gelöscht werden');
+        return;
+      }
+
+      setStatus('Attraktion gelöscht');
+      await loadAttractions(selectedParkId);
+    } finally {
+      setDeletingId(null);
+    }
+  };
+
   return (
     <div className="grid two">
       <div className="card" style={{ gridColumn: '1 / -1' }}>
@@ -113,13 +138,23 @@ export default function AttractionsPage() {
       <div className="card">
         <h3>Liste</h3>
         <table className="table">
-          <thead><tr><th>Name</th><th>Slug</th><th>Status</th></tr></thead>
+          <thead><tr><th>Name</th><th>Slug</th><th>Status</th><th>Aktionen</th></tr></thead>
           <tbody>
             {attractions.map((attraction) => (
               <tr key={attraction.id}>
                 <td>{attraction.name}</td>
                 <td>{attraction.slug}</td>
                 <td><span className={`badge ${attraction.is_active ? 'ok' : 'warn'}`}>{attraction.is_active ? 'Aktiv' : 'Inaktiv'}</span></td>
+                <td>
+                  <button
+                    type="button"
+                    className="danger inline"
+                    onClick={() => onDelete(attraction.id, attraction.name)}
+                    disabled={deletingId === attraction.id}
+                  >
+                    Löschen
+                  </button>
+                </td>
               </tr>
             ))}
           </tbody>

@@ -1,0 +1,18 @@
+/*\n  # Create users table and authentication setup\n\n  1. New Tables\n    - `users`\n      - `id` (uuid, primary key) - References auth.users\n      - `email` (text) - User's email address\n      - `vorname` (text) - First name (German: first name)\n      - `nachname` (text) - Last name (German: last name)\n      - `created_at` (timestamptz) - Account creation timestamp\n      - `updated_at` (timestamptz) - Last update timestamp\n\n  2. Security\n    - Enable RLS on `users` table\n    - Add policy for authenticated users to read their own profile\n    - Add policy for authenticated users to update their own profile\n    - Add policy for users to insert their own profile during signup\n\n  3. Functions & Triggers\n    - Create function to automatically create user profile when auth user signs up\n    - Create trigger to execute function on auth.users insert\n*/\n\n-- Create users table\nCREATE TABLE IF NOT EXISTS users (\n  id uuid PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,\n  email text NOT NULL,\n  vorname text,\n  nachname text,\n  created_at timestamptz DEFAULT now(),\n  updated_at timestamptz DEFAULT now()\n);
+\n\n-- Enable Row Level Security\nALTER TABLE users ENABLE ROW LEVEL SECURITY;
+\n\n-- Policy: Users can read their own profile\nCREATE POLICY "Users can read own profile"\n  ON users\n  FOR SELECT\n  TO authenticated\n  USING (auth.uid() = id);
+\n\n-- Policy: Users can insert their own profile\nCREATE POLICY "Users can insert own profile"\n  ON users\n  FOR INSERT\n  TO authenticated\n  WITH CHECK (auth.uid() = id);
+\n\n-- Policy: Users can update their own profile\nCREATE POLICY "Users can update own profile"\n  ON users\n  FOR UPDATE\n  TO authenticated\n  USING (auth.uid() = id)\n  WITH CHECK (auth.uid() = id);
+\n\n-- Function to create user profile automatically\nCREATE OR REPLACE FUNCTION public.handle_new_user()\nRETURNS trigger AS $$\nBEGIN\n  INSERT INTO public.users (id, email, vorname, nachname)\n  VALUES (\n    new.id,\n    new.email,\n    new.raw_user_meta_data->>'first_name',\n    new.raw_user_meta_data->>'last_name'\n  );
+\n  RETURN new;
+\nEND;
+\n$$ LANGUAGE plpgsql SECURITY DEFINER;
+\n\n-- Trigger to execute function on new auth user\nDROP TRIGGER IF EXISTS on_auth_user_created ON auth.users;
+\nCREATE TRIGGER on_auth_user_created\n  AFTER INSERT ON auth.users\n  FOR EACH ROW EXECUTE FUNCTION public.handle_new_user();
+\n\n-- Update updated_at timestamp automatically\nCREATE OR REPLACE FUNCTION public.handle_updated_at()\nRETURNS trigger AS $$\nBEGIN\n  NEW.updated_at = now();
+\n  RETURN NEW;
+\nEND;
+\n$$ LANGUAGE plpgsql;
+\n\nDROP TRIGGER IF EXISTS on_user_updated ON users;
+\nCREATE TRIGGER on_user_updated\n  BEFORE UPDATE ON users\n  FOR EACH ROW EXECUTE FUNCTION public.handle_updated_at();
+;

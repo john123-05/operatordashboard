@@ -14,6 +14,7 @@ export async function GET(req: NextRequest) {
 
   let matchedParkId: string | null = null;
   let matchedParkName: string | null = null;
+  let matchedCustomerCode: string | null = null;
   let matchedAttractionId: string | null = null;
   let matchedAttractionName: string | null = null;
 
@@ -31,17 +32,28 @@ export async function GET(req: NextRequest) {
     }
   }
 
-  if (matchedParkId && parsed.customerCode) {
-    const { data: cameraRow } = await supabaseService
-      .from('park_cameras')
-      .select('attraction_id')
-      .eq('park_id', matchedParkId)
-      .eq('customer_code', parsed.customerCode)
-      .eq('is_active', true)
-      .maybeSingle();
+  if (matchedParkId) {
+    const customerCodeCandidates = [
+      parsed.customerCode,
+      parsed.legacyCustomerCode,
+    ].filter((value, index, arr): value is string => !!value && arr.indexOf(value) === index);
 
-    if (cameraRow?.attraction_id) {
+    for (const candidateCode of customerCodeCandidates) {
+      const { data: cameraRow } = await supabaseService
+        .from('park_cameras')
+        .select('attraction_id')
+        .eq('park_id', matchedParkId)
+        .eq('customer_code', candidateCode)
+        .eq('is_active', true)
+        .maybeSingle();
+
+      if (!cameraRow?.attraction_id) continue;
+      matchedCustomerCode = candidateCode;
       matchedAttractionId = cameraRow.attraction_id;
+      break;
+    }
+
+    if (matchedAttractionId) {
       const { data: attrRow } = await supabaseService
         .from('attractions')
         .select('name')
@@ -57,6 +69,7 @@ export async function GET(req: NextRequest) {
       ...parsed,
       matchedParkId,
       matchedParkName,
+      matchedCustomerCode,
       matchedAttractionId,
       matchedAttractionName,
     },

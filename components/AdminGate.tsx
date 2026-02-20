@@ -48,6 +48,7 @@ export default function AdminGate({ children }: { children: React.ReactNode }) {
     { href: '/parks', label: 'Parks' },
     { href: '/attractions', label: 'Attraktionen' },
     { href: '/cameras', label: 'Kameras' },
+    { href: '/support-ticket-kunden', label: 'Support Ticket Kunden' },
     { href: '/ingestion-check', label: 'Ingestion Check' },
   ];
 
@@ -67,16 +68,20 @@ export default function AdminGate({ children }: { children: React.ReactNode }) {
 
   return (
     <div className="container">
-      <h1>Operator Dashboard</h1>
-      <div className="nav">
-        {tabs.map((tab) => (
-          <Link key={tab.href} href={tab.href} className={pathname === tab.href ? 'active' : ''}>
-            {tab.label}
-          </Link>
-        ))}
+      <div className="topbar card">
+        <div className="brand">
+          <p className="eyebrow">Liftpictures</p>
+          <h1>Operator Dashboard</h1>
+        </div>
+        <div className="nav-links">
+          {tabs.map((tab) => (
+            <Link key={tab.href} href={tab.href} className={pathname === tab.href ? 'active' : ''}>
+              {tab.label}
+            </Link>
+          ))}
+        </div>
         <button
-          className="secondary"
-          style={{ width: 'auto' }}
+          className="secondary logout-btn"
           onClick={async () => {
             await supabaseBrowser.auth.signOut();
             window.location.href = '/login';
